@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>CRM – Statystyki i zarządzanie</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { margin: 0; font-family: Arial, sans-serif; background: #f4f4f4; }
+
+        header {
+            background-color: white;
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            border-bottom: 1px solid #ccc;
+            margin-left: 60px;
+        }
+
+        header img { height: 40px; margin-right: 10px; }
+        header h1 { flex-grow: 1; text-align: center; margin: 0; font-size: 20px; }
+
+        .sidebar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 60px;
+            height: 100vh;
+            background: linear-gradient(to bottom, #9b59b6, #8e44ad);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-top: 20px;
+        }
+
+        .sidebar a {
+            color: white;
+            text-decoration: none;
+            font-size: 20px;
+            margin: 20px 0;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 10px;
+        }
+
+        .sidebar a:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: scale(1.2);
+        }
+
+        .content {
+            margin-left: 60px;
+            padding: 20px;
+            overflow-x: auto;
+        }
+
+        .kanban {
+            display: flex;
+            gap: 20px;
+        }
+
+        .kanban-column {
+            background: #fff;
+            padding: 15px;
+            border-radius: 6px;
+            box-shadow: 0 0 5px rgba(0,0,0,0.1);
+            width: 240px;
+            flex-shrink: 0;
+        }
+
+        .kanban-column h2 {
+            text-align: center;
+            font-size: 16px;
+        }
+
+        .kanban-card {
+            background: #f0f0ff;
+            padding: 10px;
+            margin-top: 10px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .kanban-card:hover {
+            background-color: #e0e0ff;
+        }
+
+        #statsView {
+            display: none;
+        }
+
+        #editModal {
+            display: none;
+            position: fixed;
+            top: 20%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: white;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            padding: 20px;
+            width: 300px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.3);
+        }
+
+        #editModal input, #editModal textarea {
+            width: 100%;
+            margin: 6px 0;
+            padding: 6px;
+        }
+
+        #editModal button {
+            margin-top: 10px;
+            padding: 8px 10px;
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+<div class="sidebar">
+    <a href="#" title="Home" onclick="toggleView('home')"><i class="fas fa-home"></i></a>
+    <a href="#" title="Statystyki" onclick="toggleView('stats')"><i class="fas fa-chart-bar"></i></a>
+</div>
+
+<header>
+    <img src="{{ url_for('static', filename='logo_clean.png') }}" alt="Logo">
+    <h1>CRM – Leady z Google Sheets</h1>
+</header>
+
+<div class="content" id="kanbanView">
+    <main class="kanban">
+        <div class="kanban-column" ondragover="event.preventDefault()" ondrop="dropCard(event, 'leadyList')">
+            <h2>Leady</h2>
+            <div id="leadyList"></div>
+        </div>
+        <div class="kanban-column" ondragover="event.preventDefault()" ondrop="dropCard(event, 'qualifiedList')">
+            <h2>Zakwalifikowani</h2>
+            <div id="qualifiedList"></div>
+        </div>
+        <div class="kanban-column" ondragover="event.preventDefault()" ondrop="dropCard(event, 'meetingsList')">
+            <h2>Umówione spotkania</h2>
+            <div id="meetingsList"></div>
+        </div>
+        <div class="kanban-column" ondragover="event.preventDefault()" ondrop="dropCard(event, 'decisionList')">
+            <h2>Decyzja</h2>
+            <div id="decisionList"></div>
+        </div>
+        <div class="kanban-column" ondragover="event.preventDefault()" ondrop="dropCard(event, 'dealList')">
+            <h2>Deal</h2>
+            <div id="dealList"></div>
+        </div>
+        <div class="kanban-column">
+            <h2>Archiwum</h2>
+            <div id="archiveList"></div>
+        </div>
+    </main>
+</div>
+
+<div class="content" id="statsView">
+    <h2>Statystyki leadów</h2>
+    <canvas id="statsChart" width="600" height="300"></canvas>
+    <div id="statsSummary" style="margin-top:20px; font-weight:bold;"></div>
+</div>
+
+<div id="editModal">
+    <input type="text" id="editName" placeholder="Nazwa">
+    <input type="text" id="editEmail" placeholder="Email">
+    <input type="text" id="editPhone" placeholder="Telefon">
+    <input type="text" id="editDetails" placeholder="Szczegóły">
+    <input type="number" id="editValue" placeholder="Wartość">
+    <textarea id="editNote" placeholder="Notatka"></textarea>
+<input type="date" id="editFollowUp" placeholder="Data kontaktu">
+    <button onclick="saveEdits()">Zapisz</button>
+    <button onclick="archiveLead()">Archiwizuj</button>
+    <button onclick="deleteLead()">Usuń</button>
+    <button onclick="closeModal()">Anuluj</button>
+</div>
+
+<script>
+let draggedCard = null;
+let editedCard = null;
+
+function toggleView(view) {
+    document.getElementById('kanbanView').style.display = view === 'home' ? 'block' : 'none';
+    document.getElementById('statsView').style.display = view === 'stats' ? 'block' : 'none';
+    if (view === 'stats') generateStats();
+}
+
+async function loadLeadyFromSheet() {
+    const res = await fetch('/api/sheet-leady');
+    const data = await res.json();
+    const list = document.getElementById('leadyList');
+    list.innerHTML = '';
+    data.forEach(lead => {
+        const card = createCard({
+            name: lead["Nazwa"],
+            email: lead["Email"],
+            phone: lead["Numer telefonu"],
+            details: lead["Szczegóły"],
+            value: lead["Wartość"] || 0,
+            note: lead["Notatka"] || ""
+        });
+        list.appendChild(card);
+    });
+}
+
+function createCard(data) {
+    const card = document.createElement('div');
+    card.className = 'kanban-card';
+    card.draggable = true;
+    card.innerHTML = `<strong>${data.name}</strong><br>${data.email}<br>${data.phone}<br><em>${data.details}</em><br><strong>${data.value} PLN</strong><br><small>${data.note}</small>`;
+    card.dataset.name = data.name;
+    card.dataset.email = data.email;
+    card.dataset.phone = data.phone;
+    card.dataset.details = data.details;
+    card.dataset.value = data.value;
+    card.dataset.note = data.note;
+    card.dataset.followup = data.followup || '';
+    card.onclick = () => openEdit(card);
+    card.ondragstart = () => { draggedCard = card; };
+    return card;
+}
+
+function dropCard(event, targetId) {
+    event.preventDefault();
+    if (draggedCard) {
+        document.getElementById(targetId).appendChild(draggedCard);
+        draggedCard = null;
+    }
+}
+
+function openEdit(card) {
+    editedCard = card;
+    document.getElementById('editName').value = card.dataset.name;
+    document.getElementById('editEmail').value = card.dataset.email;
+    document.getElementById('editPhone').value = card.dataset.phone;
+    document.getElementById('editDetails').value = card.dataset.details;
+    document.getElementById('editValue').value = card.dataset.value;
+    document.getElementById('editNote').value = card.dataset.note;
+    document.getElementById('editFollowUp').value = card.dataset.followup || '';
+    document.getElementById('editModal').style.display = 'block';
+}
+
+function closeModal() {
+    document.getElementById('editModal').style.display = 'none';
+}
+
+function saveEdits() {
+    if (editedCard) {
+        editedCard.dataset.name = document.getElementById('editName').value;
+        editedCard.dataset.email = document.getElementById('editEmail').value;
+        editedCard.dataset.phone = document.getElementById('editPhone').value;
+        editedCard.dataset.details = document.getElementById('editDetails').value;
+        editedCard.dataset.value = document.getElementById('editValue').value;
+        editedCard.dataset.note = document.getElementById('editNote').value;
+    editedCard.dataset.followup = document.getElementById('editFollowUp').value;
+        editedCard.innerHTML = `<strong>${editedCard.dataset.name}</strong><br>${editedCard.dataset.email}<br>${editedCard.dataset.phone}<br><em>${editedCard.dataset.details}</em><br><strong>${editedCard.dataset.value} PLN</strong><br><small>${editedCard.dataset.note}</small>`;
+        closeModal();
+    }
+}
+
+function deleteLead() {
+    if (editedCard) {
+        editedCard.remove();
+        closeModal();
+    }
+}
+
+function archiveLead() {
+    if (editedCard) {
+        document.getElementById('archiveList').appendChild(editedCard);
+        closeModal();
+    }
+}
+
+function generateStats() {
+    const counts = {
+        Leady: document.getElementById('leadyList').childElementCount,
+        Zakwalifikowani: document.getElementById('qualifiedList').childElementCount,
+        Spotkania: document.getElementById('meetingsList').childElementCount,
+        Decyzja: document.getElementById('decisionList').childElementCount,
+        Deal: document.getElementById('dealList').childElementCount,
+        Archiwum: document.getElementById('archiveList').childElementCount
+    };
+
+    const values = Array.from(document.getElementById('dealList').children)
+        .map(card => parseFloat(card.dataset.value || "0"));
+    const totalDealValue = values.reduce((a, b) => a + b, 0);
+
+    const summaryHTML = `
+        <p>Leady: ${counts.Leady}</p>
+        <p>Zakwalifikowani: ${counts.Zakwalifikowani}</p>
+        <p>Spotkania: ${counts.Spotkania}</p>
+        <p>Decyzja: ${counts.Decyzja}</p>
+        <p>Deal: ${counts.Deal} (suma: ${totalDealValue.toLocaleString('pl-PL')} PLN)</p>
+        <p>Archiwum: ${counts.Archiwum}</p>
+    `;
+    document.getElementById('statsSummary').innerHTML = summaryHTML;
+
+    const ctx = document.getElementById('statsChart').getContext('2d');
+    if (window.statsChartObj) window.statsChartObj.destroy();
+    window.statsChartObj = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: Object.keys(counts),
+            datasets: [{
+                label: 'Liczba leadów',
+                data: Object.values(counts),
+                backgroundColor: '#8e44ad'
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { display: false },
+                title: { display: true, text: 'Rozkład leadów' }
+            }
+        }
+    });
+}
+
+window.onload = loadLeadyFromSheet;
+</script>
+</body>
+</html>
